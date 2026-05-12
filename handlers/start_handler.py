@@ -38,12 +38,13 @@ class StartHandler:
     async def handle_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Handles the main /start command and deep links."""
         user = update.effective_user
-        if not user:
+        msg = update.effective_message
+        if not user or not msg:
             return
 
         # 🛠️ 1. MAINTENANCE MODE CHECK
         if self.cfg.MAINTENANCE_MODE and not self.cfg.is_admin(user.id):
-            await update.message.reply_text(
+            await msg.reply_text(
                 "⚠️ <b>System Upgrade in Progress</b>\n\n"
                 "Bot abhi maintenance mode mein hai. Thodi der mein wapis aana. 🙏",
                 parse_mode="HTML"
@@ -77,8 +78,8 @@ class StartHandler:
 
         # 🚫 4. BAN SYSTEM CHECK
         if db_user.get("is_banned"):
-            support = f"@{self.cfg.SUPPORT_USERNAME}" if self.cfg.SUPPORT_USERNAME else "Admins"
-            await update.message.reply_text(
+            support = f"@{self.cfg.SUPPORT_USERNAME}" if getattr(self.cfg, 'SUPPORT_USERNAME', None) else "Admins"
+            await msg.reply_text(
                 "🚫 <b>Account Suspended</b>\n\n"
                 f"Tumhare account ko ban kar diya gaya hai. Contact: {support}",
                 parse_mode="HTML"
@@ -129,7 +130,7 @@ class StartHandler:
         if referral_by:
             welcome_text += "\n\n🎉 <b>Referral Bonus Activated! Both you and your friend earned points.</b>"
 
-        await update.message.reply_text(welcome_text, reply_markup=markup, parse_mode="HTML")
+        await msg.reply_text(welcome_text, reply_markup=markup, parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # 🔗 DEEP LINK FILE FETCHING LOGIC
@@ -141,6 +142,7 @@ class StartHandler:
         fh = FileHandler(self.cfg)
 
         user = update.effective_user
+        msg = update.effective_message
         db_user = await Database.get_user(user.id)
         
         # Fallback registration
@@ -148,7 +150,7 @@ class StartHandler:
             db_user = await Database.add_user(user.id, user.username or "", user.first_name or "VIP User")
 
         if db_user.get("is_banned"):
-            await update.message.reply_text("🚫 <b>Access Denied: Account Banned.</b>", parse_mode="HTML")
+            await msg.reply_text("🚫 <b>Access Denied: Account Banned.</b>", parse_mode="HTML")
             return
 
         all_joined, not_joined = await self.force_join.check_membership(ctx.bot, user.id)
@@ -164,6 +166,7 @@ class StartHandler:
     # ═════════════════════════════════════════════════════════════
 
     async def handle_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        msg = update.effective_message
         help_text = (
             "📖 <b>Master Command Directory</b>\n\n"
             "<b>📁 Core File Management:</b>\n"
@@ -187,7 +190,7 @@ class StartHandler:
             "<b>🔗 Share Format:</b>\n"
             f"<code>https://t.me/{self.cfg.BOT_USERNAME}?start=get_YOUR_KEY</code>"
         )
-        await update.message.reply_text(help_text, parse_mode="HTML")
+        await msg.reply_text(help_text, parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # 👤 /profile COMMAND
@@ -195,10 +198,11 @@ class StartHandler:
 
     async def handle_profile(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
+        msg = update.effective_message
         db_user = await Database.get_user(user.id)
         
         if not db_user:
-            await update.message.reply_text("⚠️ Database error. Please hit /start first.")
+            await msg.reply_text("⚠️ Database error. Please hit /start first.")
             return
 
         total_files = await Database.count_user_files(user.id)
@@ -226,13 +230,14 @@ class StartHandler:
             ref_link = f"https://t.me/{self.cfg.BOT_USERNAME}?start=ref_{ref_code}"
             profile_text += f"\n🔗 <b>Your Invite Link:</b>\n<code>{ref_link}</code>"
 
-        await update.message.reply_text(profile_text, parse_mode="HTML")
+        await msg.reply_text(profile_text, parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # 📊 /stats COMMAND
     # ═════════════════════════════════════════════════════════════
 
     async def handle_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        msg = update.effective_message
         stats = await Database.get_stats()
         stats_text = (
             "📊 <b>Global Network Statistics</b>\n"
@@ -245,7 +250,7 @@ class StartHandler:
             f"📥 <b>Today's Traffic (OUT):</b> {stats['today_downloads']:,}\n"
             "━━━━━━━━━━━━━━━━━━\n"
         )
-        await update.message.reply_text(stats_text, parse_mode="HTML")
+        await msg.reply_text(stats_text, parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # 🎁 /referral COMMAND
@@ -253,16 +258,17 @@ class StartHandler:
 
     async def handle_referral(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
+        msg = update.effective_message
         db_user = await Database.get_user(user.id)
         if not db_user:
-            await update.message.reply_text("Please trigger /start to initialize your account.")
+            await msg.reply_text("Please trigger /start to initialize your account.")
             return
 
         ref_code = db_user.get("referral_code", "")
         ref_count = db_user.get("referral_count", 0)
 
         if not self.cfg.BOT_USERNAME:
-            await update.message.reply_text("System Error: Bot username missing.")
+            await msg.reply_text("System Error: Bot username missing.")
             return
 
         ref_link = f"https://t.me/{self.cfg.BOT_USERNAME}?start=ref_{ref_code}"
@@ -272,16 +278,17 @@ class StartHandler:
             f"🔗 <b>Your Exclusive Link:</b>\n<code>{ref_link}</code>\n\n"
             "<i>Share this link to earn extra storage and VIP perks!</i> 🏆"
         )
-        await update.message.reply_text(ref_text, parse_mode="HTML")
+        await msg.reply_text(ref_text, parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # 🏆 /leaderboard COMMAND
     # ═════════════════════════════════════════════════════════════
 
     async def handle_leaderboard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        msg = update.effective_message
         leaders = await Database.get_referral_leaderboard(10)
         if not leaders:
-            await update.message.reply_text("🏆 No one has claimed the throne yet.")
+            await msg.reply_text("🏆 No one has claimed the throne yet.")
             return
 
         lines = ["🏆 <b>Top Network Influencers</b>\n"]
@@ -292,7 +299,7 @@ class StartHandler:
             count = u.get("referral_count", 0)
             lines.append(f"{medals[i]} {name} — <b>{count} points</b>")
 
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await msg.reply_text("\n".join(lines), parse_mode="HTML")
 
     # ═════════════════════════════════════════════════════════════
     # ⚙️ LIGHTNING FAST CALLBACK ENGINE
@@ -310,20 +317,17 @@ class StartHandler:
         data = q.data
 
         try:
+            # Re-routing with safe effective_message propagation
             if data == "start_profile":
-                update._effective_message = q.message
                 await self.handle_profile(update, ctx)
                 
             elif data == "start_stats":
-                update._effective_message = q.message
                 await self.handle_stats(update, ctx)
                 
             elif data == "start_leaderboard":
-                update._effective_message = q.message
                 await self.handle_leaderboard(update, ctx)
                 
             elif data == "start_help":
-                update._effective_message = q.message
                 await self.handle_help(update, ctx)
                 
             elif data == "start_upload_help":
