@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════╗
 ║          ULTRA ADVANCED TELEGRAM FILE SHARE BOT              ║
 ║          Force Join + Encrypted Files + Admin Panel          ║
-║          Railway Ready | Python 3.11 | Zero Errors           ║
+║          Railway Ready | Python 3.12+ | Zero Errors          ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -12,13 +12,16 @@ import os
 import sys
 from datetime import datetime
 
+# Railway fix for asyncio event loops
+import nest_asyncio
+nest_asyncio.apply()
+
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ConversationHandler,
     filters,
     ContextTypes,
 )
@@ -29,8 +32,6 @@ from handlers.start_handler import StartHandler
 from handlers.file_handler import FileHandler
 from handlers.admin_handler import AdminHandler
 from handlers.channel_handler import ChannelHandler
-from middlewares.force_join import ForceJoinMiddleware
-from middlewares.rate_limiter import RateLimiter
 from utils.scheduler import BotScheduler
 from utils.logger import setup_logger
 
@@ -42,9 +43,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Global error handler — zero errors reach user."""
     logger.error("Exception while handling update:", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
-        await update.effective_message.reply_text(
-            "⚠️ Kuch technical issue aa gaya. Please /start karo dobara."
-        )
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Kuch technical issue aa gaya. Please /start karo dobara."
+            )
+        except Exception:
+            pass
 
 
 def build_application() -> Application:
@@ -57,9 +61,6 @@ def build_application() -> Application:
         .concurrent_updates(True)
         .build()
     )
-
-    # ─── Middleware-style pre-processing ─────────────────────
-    # (Force Join check runs inside each handler)
 
     # ─── Handlers ────────────────────────────────────────────
     start_h = StartHandler(cfg)
@@ -124,45 +125,48 @@ def build_application() -> Application:
     return app
 
 
-async def main() -> None:
-    """Entry point — Railway compatible."""
+async def setup_dependencies(app: Application):
+    """Database aur scheduler setup karne ka alag function taaki loop clash na ho."""
     cfg = Config()
-
-    # Init DB
     await Database.connect(cfg.MONGO_URI, cfg.DB_NAME)
     logger.info("✅ MongoDB connected")
 
-    app = build_application()
-
-    # Start scheduler (auto-cleanup, stats, etc.)
     scheduler = BotScheduler(app)
     await scheduler.start()
+    logger.info("✅ Scheduler started")
 
+
+def main() -> None:
+    """Main function - Modified for zero loop errors on Railway."""
+    app = build_application()
     logger.info("🚀 Bot starting up...")
 
-    # Railway uses PORT env var for webhooks, else polling
+    # Event loop banake dependencies setup karte hain bina application run kiye
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(setup_dependencies(app))
+
+    # Railway webhook and polling logic
+    cfg = Config()
     port = int(os.environ.get("PORT", 0))
 
-    if port and cfg.WEBHOOK_URL:
-        # Webhook mode for Railway production
+    if port and getattr(cfg, "WEBHOOK_URL", None):
         webhook_url = f"{cfg.WEBHOOK_URL}/{cfg.BOT_TOKEN}"
-        await app.run_webhook(
+        logger.info(f"🌐 Starting via Webhook on port {port}")
+        app.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=webhook_url,
             drop_pending_updates=True,
         )
     else:
-        # Polling mode for local dev
-        await app.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-        )
+        logger.info("🤖 Starting via Polling")
+        # Run polling blocks thread, avoids asyncio.run() clash
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot stopped manually.")
     except Exception as e:
