@@ -1,13 +1,17 @@
 """
-Start Handler — /start, /help, /profile, /stats, /referral, /leaderboard
+╔══════════════════════════════════════════════════════════════╗
+║               ULTRA VIP START HANDLER SYSTEM                 ║
+║       God Mode | Unicode Bold Buttons | Zero Lag Engine      ║
+╚══════════════════════════════════════════════════════════════╝
 """
 
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Optional
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatAction
 from telegram.ext import ContextTypes
 
 from config import Config
@@ -15,31 +19,37 @@ from database.mongodb import Database
 from middlewares.force_join import ForceJoinMiddleware
 from utils.helpers import format_size, escape_html
 
+# ─── System Logger ───────────────────────────────────────────
 logger = logging.getLogger(__name__)
 
-
 class StartHandler:
+    """Master controller for Start, Help, Profile, Stats, and Callbacks."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.force_join = ForceJoinMiddleware(cfg)
+        logger.info("⚡ StartHandler Loaded Successfully.")
 
-    # ─── /start ───────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 💎 /start COMMAND MASTER LOGIC
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handles the main /start command and deep links."""
         user = update.effective_user
         if not user:
             return
 
-        # Check maintenance mode
+        # 🛠️ 1. MAINTENANCE MODE CHECK
         if self.cfg.MAINTENANCE_MODE and not self.cfg.is_admin(user.id):
             await update.message.reply_text(
-                "🔧 <b>Bot maintenance chal raha hai.</b>\n\nThodi der mein wapis aao. 🙏",
+                "⚠️ <b>System Upgrade in Progress</b>\n\n"
+                "Bot abhi maintenance mode mein hai. Thodi der mein wapis aana. 🙏",
                 parse_mode="HTML"
             )
             return
 
-        # Parse referral from deep link: /start ref_XXXX
+        # 🔗 2. DEEP LINK PARSING (/start ref_XYZ or /start get_XYZ)
         referral_by: Optional[int] = None
         args = ctx.args
         if args:
@@ -49,243 +59,308 @@ class StartHandler:
                 ref_user = await Database.get_user_by_referral_code(ref_code)
                 if ref_user and ref_user["user_id"] != user.id:
                     referral_by = ref_user["user_id"]
+                    logger.info(f"🎁 Referral detected: {user.id} referred by {referral_by}")
             elif arg.startswith("get_"):
-                # Deep link for file: /start get_FILEKEY
+                # Handle direct file fetch
                 file_key = arg[4:]
                 await self._handle_deep_link_file(update, ctx, file_key)
                 return
 
-        # Register user
+        # 🗄️ 3. DATABASE REGISTRATION
         db_user = await Database.add_user(
             user.id,
             user.username or "",
-            user.first_name or "User",
+            user.first_name or "VIP User",
             referral_by=referral_by
         )
 
-        # Ban check
+        # 🚫 4. BAN SYSTEM CHECK
         if db_user.get("is_banned"):
+            support = f"@{self.cfg.SUPPORT_USERNAME}" if self.cfg.SUPPORT_USERNAME else "Admins"
             await update.message.reply_text(
-                "🚫 <b>Tumhe ban kar diya gaya hai.</b>\n\n"
-                f"Support ke liye contact karo: @{self.cfg.SUPPORT_USERNAME}" if self.cfg.SUPPORT_USERNAME else "🚫 <b>You are banned.</b>",
+                "🚫 <b>Account Suspended</b>\n\n"
+                f"Tumhare account ko ban kar diya gaya hai. Contact: {support}",
                 parse_mode="HTML"
             )
             return
 
-        # Force join check
+        # 🔒 5. FORCE JOIN VERIFICATION
         all_joined, not_joined = await self.force_join.check_membership(ctx.bot, user.id)
         if not all_joined:
             await self.force_join.send_join_request(ctx.bot, update.effective_chat.id, not_joined)
             return
 
-        # Welcome message
+        # 🎮 6. VIP DASHBOARD UI (The Bold Unicode Magic)
+        # Yahan hum Unicode Bold fonts ka use kar rahe hain: 𝗨𝗽𝗹𝗼𝗮𝗱 𝗙𝗶𝗹𝗲𝘀, 𝗠𝘆 𝗙𝗶𝗹𝗲𝘀
         buttons = [
             [
-                InlineKeyboardButton("📤 Upload File", callback_data="start_upload_help"),
-                InlineKeyboardButton("📁 My Files", callback_data="start_myfiles"),
+                InlineKeyboardButton("𝗨𝗽𝗹𝗼𝗮𝗱 𝗙𝗶𝗹𝗲", callback_data="start_upload_help"),
+                InlineKeyboardButton("𝗠𝘆 𝗙𝗶𝗹𝗲𝘀", callback_data="start_myfiles"),
             ],
             [
-                InlineKeyboardButton("🔗 Get by Link", callback_data="start_getlink"),
-                InlineKeyboardButton("👤 Profile", callback_data="start_profile"),
+                InlineKeyboardButton("𝗚𝗲𝘁 𝗕𝘆 𝗟𝗶𝗻𝗸", callback_data="start_getlink"),
+                InlineKeyboardButton("𝗣𝗿𝗼𝗳𝗶𝗹𝗲", callback_data="start_profile"),
             ],
             [
-                InlineKeyboardButton("📊 Stats", callback_data="start_stats"),
-                InlineKeyboardButton("🏆 Leaderboard", callback_data="start_leaderboard"),
+                InlineKeyboardButton("𝗦𝘁𝗮𝘁𝘀", callback_data="start_stats"),
+                InlineKeyboardButton("𝗟𝗲𝗮𝗱𝗲𝗿𝗯𝗼𝗮𝗿𝗱", callback_data="start_leaderboard"),
             ],
-            [InlineKeyboardButton("❓ Help", callback_data="start_help")],
+            [
+                InlineKeyboardButton("𝗛𝗲𝗹𝗽 𝗖𝗲𝗻𝘁𝗲𝗿", callback_data="start_help")
+            ],
         ]
         markup = InlineKeyboardMarkup(buttons)
 
-        welcome = (
-            f"👋 <b>Welcome, {escape_html(user.first_name)}!</b>\n\n"
-            f"🗄️ <b>{self.cfg.BOT_NAME}</b> — Advanced File Share Bot\n\n"
-            "✅ <b>Kya kar sakte ho:</b>\n"
-            "• Unlimited files upload karo\n"
-            "• Files ko password se lock karo 🔐\n"
-            "• Secure share links generate karo 🔗\n"
-            "• Files search karo 🔍\n"
-            "• Referral earn karo 🎁\n\n"
-            "<i>Koi bhi file bhejo ya neeche se option chuno 👇</i>"
+        # Typing Action show karo taaki premium feel aaye
+        await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        await asyncio.sleep(0.3)
+
+        welcome_text = (
+            f"👋 <b>Welcome to the Elite Network, {escape_html(user.first_name)}!</b>\n\n"
+            f"⚡ <b>{self.cfg.BOT_NAME}</b> is your ultimate storage powerhouse.\n\n"
+            "💎 <b>VIP Features You Can Use:</b>\n"
+            "• Upload unlimited files securely\n"
+            "• Add robust passwords to your files 🔐\n"
+            "• Generate lightning-fast share links 🔗\n"
+            "• Earn exclusive rewards via Referrals 🎁\n\n"
+            "<i>Choose an option below or directly send a file to begin. 👇</i>"
         )
 
         if referral_by:
-            welcome += "\n\n🎁 <b>Referral se join kiya — dono ko bonus milega!</b>"
+            welcome_text += "\n\n🎉 <b>Referral Bonus Activated! Both you and your friend earned points.</b>"
 
-        await update.message.reply_text(welcome, reply_markup=markup, parse_mode="HTML")
+        await update.message.reply_text(welcome_text, reply_markup=markup, parse_mode="HTML")
+
+    # ═════════════════════════════════════════════════════════════
+    # 🔗 DEEP LINK FILE FETCHING LOGIC
+    # ═════════════════════════════════════════════════════════════
 
     async def _handle_deep_link_file(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, file_key: str) -> None:
-        """Handle /start get_FILEKEY deep links."""
+        """Processes /start get_FILEKEY and delivers the file instantly."""
+        # Avoiding circular imports
         from handlers.file_handler import FileHandler
         fh = FileHandler(self.cfg)
 
         user = update.effective_user
         db_user = await Database.get_user(user.id)
+        
+        # Fallback registration
         if not db_user:
-            db_user = await Database.add_user(user.id, user.username or "", user.first_name or "")
+            db_user = await Database.add_user(user.id, user.username or "", user.first_name or "VIP User")
 
         if db_user.get("is_banned"):
-            await update.message.reply_text("🚫 You are banned.")
+            await update.message.reply_text("🚫 <b>Access Denied: Account Banned.</b>", parse_mode="HTML")
             return
 
-        # Force join
         all_joined, not_joined = await self.force_join.check_membership(ctx.bot, user.id)
         if not all_joined:
             await self.force_join.send_join_request(ctx.bot, update.effective_chat.id, not_joined)
             return
 
+        # Delivery logic inside file handler
         await fh._deliver_file(update, ctx, file_key)
 
-    # ─── /help ────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 📖 /help COMMAND
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        text = (
-            "📖 <b>Commands List</b>\n\n"
-            "<b>📁 File Commands:</b>\n"
-            "/get <code>file_key</code> — File retrieve karo\n"
-            "/myfiles — Apni files dekho\n"
-            "/delete <code>file_key</code> — File delete karo\n"
-            "/rename <code>file_key new_name</code> — Rename karo\n"
-            "/lock <code>file_key password</code> — File ko lock karo\n"
-            "/unlock <code>file_key</code> — Lock hatao\n"
-            "/share <code>file_key</code> — Share link banao\n"
-            "/info <code>file_key</code> — File info dekho\n"
-            "/search <code>query</code> — Files search karo\n\n"
-            "<b>👤 User Commands:</b>\n"
-            "/start — Bot start karo\n"
-            "/profile — Apna profile dekho\n"
-            "/stats — Bot statistics\n"
-            "/referral — Referral link lo\n"
-            "/leaderboard — Top referrers\n"
-            "/help — Yeh message\n\n"
-            "<b>📤 Upload:</b>\n"
-            "Koi bhi file seedha bhejo — document, video, audio, photo sab!\n\n"
-            "<b>🔗 Share Link:</b>\n"
-            f"Format: <code>https://t.me/{self.cfg.BOT_USERNAME}?start=get_FILE_KEY</code>"
+        help_text = (
+            "📖 <b>Master Command Directory</b>\n\n"
+            "<b>📁 Core File Management:</b>\n"
+            "• <code>/get file_key</code> — Fetch a specific file\n"
+            "• <code>/myfiles</code> — View your personal vault\n"
+            "• <code>/delete file_key</code> — Permanently remove a file\n"
+            "• <code>/rename file_key new_name</code> — Rename your file\n"
+            "• <code>/lock file_key password</code> — Secure file with password\n"
+            "• <code>/unlock file_key</code> — Remove password protection\n"
+            "• <code>/share file_key</code> — Generate sharing link\n"
+            "• <code>/info file_key</code> — Inspect file details\n"
+            "• <code>/search query</code> — Search your uploads\n\n"
+            "<b>👤 Account Controls:</b>\n"
+            "• <code>/start</code> — Reboot the system\n"
+            "• <code>/profile</code> — View your account stats\n"
+            "• <code>/stats</code> — View global bot statistics\n"
+            "• <code>/referral</code> — Get your money-making link\n"
+            "• <code>/leaderboard</code> — View top referrers\n\n"
+            "<b>📤 How to Upload?</b>\n"
+            "Simply send or forward ANY file (Video, Document, Photo, Audio) directly to this chat.\n\n"
+            "<b>🔗 Share Format:</b>\n"
+            f"<code>https://t.me/{self.cfg.BOT_USERNAME}?start=get_YOUR_KEY</code>"
         )
-        await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(help_text, parse_mode="HTML")
 
-    # ─── /profile ─────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 👤 /profile COMMAND
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_profile(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         db_user = await Database.get_user(user.id)
+        
         if not db_user:
-            await update.message.reply_text("Pehle /start karo.")
+            await update.message.reply_text("⚠️ Database error. Please hit /start first.")
             return
 
         total_files = await Database.count_user_files(user.id)
         storage = format_size(db_user.get("storage_used_bytes", 0))
-        plan = db_user.get("plan", "free").upper()
+        plan = db_user.get("plan", "VIP PRO").upper()
 
-        text = (
-            f"👤 <b>Your Profile</b>\n\n"
-            f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
-            f"📛 <b>Name:</b> {escape_html(db_user.get('first_name', ''))}\n"
-            f"👤 <b>Username:</b> @{db_user.get('username') or 'N/A'}\n"
-            f"💎 <b>Plan:</b> {plan}\n\n"
-            f"📁 <b>Total Files:</b> {total_files}\n"
-            f"💾 <b>Storage Used:</b> {storage}\n"
-            f"📤 <b>Total Uploads:</b> {db_user.get('total_uploads', 0)}\n"
-            f"📥 <b>Total Downloads:</b> {db_user.get('total_downloads', 0)}\n"
-            f"👥 <b>Referrals:</b> {db_user.get('referral_count', 0)}\n"
-            f"📅 <b>Joined:</b> {db_user['joined_at'].strftime('%d %b %Y')}\n"
+        profile_text = (
+            f"👤 <b>Your Elite Profile</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+            f"📛 <b>Name:</b> {escape_html(db_user.get('first_name', 'VIP'))}\n"
+            f"👤 <b>Username:</b> @{db_user.get('username') or 'Hidden'}\n"
+            f"💎 <b>Status:</b> <b>{plan}</b>\n\n"
+            f"📁 <b>Vault Files:</b> {total_files}\n"
+            f"💾 <b>Storage Consumed:</b> {storage}\n"
+            f"📤 <b>Cloud Uploads:</b> {db_user.get('total_uploads', 0)}\n"
+            f"📥 <b>Cloud Downloads:</b> {db_user.get('total_downloads', 0)}\n"
+            f"👥 <b>Active Referrals:</b> {db_user.get('referral_count', 0)}\n"
+            f"📅 <b>Member Since:</b> {db_user['joined_at'].strftime('%d %B %Y')}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
         )
 
         ref_code = db_user.get("referral_code", "")
         if ref_code and self.cfg.BOT_USERNAME:
             ref_link = f"https://t.me/{self.cfg.BOT_USERNAME}?start=ref_{ref_code}"
-            text += f"\n🔗 <b>Referral Link:</b>\n<code>{ref_link}</code>"
+            profile_text += f"\n🔗 <b>Your Invite Link:</b>\n<code>{ref_link}</code>"
 
-        await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(profile_text, parse_mode="HTML")
 
-    # ─── /stats ───────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 📊 /stats COMMAND
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         stats = await Database.get_stats()
-        text = (
-            "📊 <b>Bot Statistics</b>\n\n"
-            f"👥 <b>Total Users:</b> {stats['total_users']:,}\n"
-            f"🟢 <b>Active Today:</b> {stats['active_today']:,}\n"
-            f"📁 <b>Total Files:</b> {stats['total_files']:,}\n"
-            f"💾 <b>Total Storage:</b> {format_size(stats['total_storage_bytes'])}\n\n"
-            f"📤 <b>Today Uploads:</b> {stats['today_uploads']:,}\n"
-            f"📥 <b>Today Downloads:</b> {stats['today_downloads']:,}\n"
+        stats_text = (
+            "📊 <b>Global Network Statistics</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"👥 <b>Total Citizens:</b> {stats['total_users']:,}\n"
+            f"🟢 <b>Online Today:</b> {stats['active_today']:,}\n"
+            f"📁 <b>Global Files:</b> {stats['total_files']:,}\n"
+            f"💾 <b>Server Storage:</b> {format_size(stats['total_storage_bytes'])}\n\n"
+            f"📤 <b>Today's Traffic (IN):</b> {stats['today_uploads']:,}\n"
+            f"📥 <b>Today's Traffic (OUT):</b> {stats['today_downloads']:,}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
         )
-        await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(stats_text, parse_mode="HTML")
 
-    # ─── /referral ────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 🎁 /referral COMMAND
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_referral(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         db_user = await Database.get_user(user.id)
         if not db_user:
-            await update.message.reply_text("Pehle /start karo.")
+            await update.message.reply_text("Please trigger /start to initialize your account.")
             return
 
         ref_code = db_user.get("referral_code", "")
         ref_count = db_user.get("referral_count", 0)
 
         if not self.cfg.BOT_USERNAME:
-            await update.message.reply_text("Bot username set nahi hai admin se bolo.")
+            await update.message.reply_text("System Error: Bot username missing.")
             return
 
         ref_link = f"https://t.me/{self.cfg.BOT_USERNAME}?start=ref_{ref_code}"
-        text = (
-            "🎁 <b>Referral Program</b>\n\n"
-            f"👥 <b>Tumne refer kiya:</b> {ref_count} log\n\n"
-            f"🔗 <b>Tera Referral Link:</b>\n<code>{ref_link}</code>\n\n"
-            "Share karo aur bonus pao! 🏆"
+        ref_text = (
+            "🎁 <b>VIP Referral Program</b>\n\n"
+            f"👥 <b>Your Successful Invites:</b> {ref_count}\n\n"
+            f"🔗 <b>Your Exclusive Link:</b>\n<code>{ref_link}</code>\n\n"
+            "<i>Share this link to earn extra storage and VIP perks!</i> 🏆"
         )
-        await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(ref_text, parse_mode="HTML")
 
-    # ─── /leaderboard ─────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # 🏆 /leaderboard COMMAND
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_leaderboard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         leaders = await Database.get_referral_leaderboard(10)
         if not leaders:
-            await update.message.reply_text("Abhi koi leaderboard data nahi hai.")
+            await update.message.reply_text("🏆 No one has claimed the throne yet.")
             return
 
-        lines = ["🏆 <b>Referral Leaderboard</b>\n"]
-        medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
+        lines = ["🏆 <b>Top Network Influencers</b>\n"]
+        medals = ["🥇", "🥈", "🥉", "🏅", "🏅", "🏅", "🏅", "🏅", "🏅", "🏅"]
+        
         for i, u in enumerate(leaders):
-            name = escape_html(u.get("first_name", "User"))
+            name = escape_html(u.get("first_name", "VIP"))
             count = u.get("referral_count", 0)
-            lines.append(f"{medals[i]} {name} — <b>{count}</b> referrals")
+            lines.append(f"{medals[i]} {name} — <b>{count} points</b>")
 
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-    # ─── Inline Callbacks ─────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
+    # ⚙️ LIGHTNING FAST CALLBACK ENGINE
+    # ═════════════════════════════════════════════════════════════
 
     async def handle_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        Ye engine "System Alert" wale error ko completely khatam karta hai.
+        Isme `try-except` lagaya hai aur query ko manually assign kiya hai.
+        """
         q = update.callback_query
-        await q.answer()
+        
+        try:
+            # 1. Answer immediately to stop the loading circle (Zero Lag)
+            await q.answer()
+        except Exception as e:
+            logger.warning(f"Failed to answer callback query: {e}")
+            return # Agar query purani ho gayi toh aage mat badho
+
         data = q.data
 
-        if data == "start_profile":
-            update._effective_message = q.message
-            await self.handle_profile(update, ctx)
-        elif data == "start_stats":
-            update._effective_message = q.message
-            await self.handle_stats(update, ctx)
-        elif data == "start_leaderboard":
-            update._effective_message = q.message
-            await self.handle_leaderboard(update, ctx)
-        elif data == "start_help":
-            update._effective_message = q.message
-            await self.handle_help(update, ctx)
-        elif data == "start_upload_help":
-            await q.message.reply_text(
-                "📤 <b>File Upload Karo</b>\n\n"
-                "Seedha koi bhi file bhejo is chat mein!\n\n"
-                "✅ <b>Supported:</b> Documents, Videos, Audio, Photos, Stickers, Voice\n"
-                f"📏 <b>Max Size:</b> {self.cfg.MAX_FILE_SIZE_MB} MB\n\n"
-                "File upload hone ke baad tumhe ek unique file key aur share link milega 🔗",
-                parse_mode="HTML"
-            )
-        elif data == "start_myfiles":
-            ctx.args = []
-            await ctx.bot.send_message(
-                chat_id=q.message.chat_id,
-                text="📁 /myfiles — Tumhari files load ho rahi hain..."
-            )
+        try:
+            # 2. Re-routing Logic
+            if data == "start_profile":
+                update._effective_message = q.message
+                await self.handle_profile(update, ctx)
+                
+            elif data == "start_stats":
+                update._effective_message = q.message
+                await self.handle_stats(update, ctx)
+                
+            elif data == "start_leaderboard":
+                update._effective_message = q.message
+                await self.handle_leaderboard(update, ctx)
+                
+            elif data == "start_help":
+                update._effective_message = q.message
+                await self.handle_help(update, ctx)
+                
+            elif data == "start_upload_help":
+                await q.message.reply_text(
+                    "📤 <b>File Upload Protocol</b>\n\n"
+                    "Send or forward ANY file here instantly.\n\n"
+                    "✅ <b>Supported Formats:</b> Documents, Videos, Audio, Photos, Stickers, Archives.\n"
+                    f"📏 <b>Limit:</b> {self.cfg.MAX_FILE_SIZE_MB} MB\n\n"
+                    "<i>Once processed, you will receive an encrypted vault key and share link.</i>",
+                    parse_mode="HTML"
+                )
+                
+            elif data == "start_myfiles":
+                ctx.args = []
+                await ctx.bot.send_message(
+                    chat_id=q.message.chat_id,
+                    text="📁 <b>Accessing Vault...</b>\nType /myfiles to view your inventory.",
+                    parse_mode="HTML"
+                )
+                
+            elif data == "start_getlink":
+                await q.message.reply_text(
+                    "🔗 <b>Link Fetcher</b>\n\n"
+                    "Agar tumhare paas file key hai, toh bas chat mein `/get FILE_KEY` likho.",
+                    parse_mode="HTML"
+                )
+                
+            else:
+                logger.warning(f"Unknown callback data received: {data}")
+                
+        except Exception as e:
+            logger.error(f"Error executing callback action for {data}: {e}", exc_info=True)
+            await q.message.reply_text("⚠️ Request timeout. Please use command directly.", parse_mode="HTML")
