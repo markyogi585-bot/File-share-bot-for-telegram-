@@ -17,14 +17,10 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    InputMediaDocument,
-    InputMediaPhoto,
-    InputMediaVideo,
-    InputMediaAudio,
 )
 from telegram.constants import ParseMode, ChatAction
 from telegram.ext import ContextTypes
-from telegram.error import TelegramError, BadRequest, TimedOut, Forbidden
+from telegram.error import TelegramError
 
 from config import Config
 from database.mongodb import Database
@@ -41,7 +37,6 @@ _rate_limiter: Optional[RateLimiter] = None
 _encryptor: Optional[Encryptor] = None
 
 # ─── Memory Cache for Batch Uploads (Media Groups) ───────────────────────────
-# Ye dictionary track karegi ki ek saath aayi hui files kab khatam hongi
 _media_group_cache: Dict[str, Dict[str, Any]] = {}
 
 
@@ -62,10 +57,7 @@ def get_encryptor(cfg: Config) -> Encryptor:
 
 
 class FileSecurityGuard:
-    """
-    Ek alag class jo strictly security aur permissions manage karti hai.
-    Ye check karegi ki koi random user kisi aur ki file delete/rename na kar sake.
-    """
+    """Strict security and permissions manager."""
     
     @staticmethod
     async def verify_owner(file_doc: dict, user_id: int) -> bool:
@@ -83,10 +75,7 @@ class FileSecurityGuard:
 
 
 class FileHandler:
-    """
-    The Titan Controller.
-    Manages Uploads, Multi-Forwards, Streaming, Storage calculation, Locks and Security.
-    """
+    """The Titan Controller."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -100,17 +89,15 @@ class FileHandler:
     # ═════════════════════════════════════════════════════════════════════════════
 
     async def _system_guard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Optional[dict]:
-        """
-        Master Security Check.
-        Checks for Maintenance, Bans, Registration, and Force Join before ANY action.
-        """
+        """Master Security Check."""
         user = update.effective_user
-        if not user:
+        msg = update.effective_message
+        if not user or not msg:
             return None
 
         # 1. Maintenance Override
-        if self.cfg.MAINTENANCE_MODE and not self.cfg.is_admin(user.id):
-            await update.effective_message.reply_text(
+        if getattr(self.cfg, 'MAINTENANCE_MODE', False) and not self.cfg.is_admin(user.id):
+            await msg.reply_text(
                 "⚠️ <b>System Upgrade in Progress</b>\n\n"
                 "Engine abhi maintenance mode mein hai. Thodi der mein wapis aana.",
                 parse_mode=ParseMode.HTML
@@ -126,7 +113,7 @@ class FileHandler:
         # 3. Global Ban Check
         if db_user.get("is_banned"):
             logger.warning(f"🚫 Blocked request from banned user: {user.id}")
-            await update.effective_message.reply_text(
+            await msg.reply_text(
                 "🚫 <b>Access Denied</b>\nTumhare account ko network se ban kar diya gaya hai.",
                 parse_mode=ParseMode.HTML
             )
@@ -141,15 +128,12 @@ class FileHandler:
         return db_user
 
     async def _check_storage_capacity(self, user_id: int, incoming_size: int, db_user: dict) -> Tuple[bool, str]:
-        """
-        Real Storage Engine Check.
-        Calculates if the incoming file will breach the user's maximum quota.
-        """
+        """Real Storage Engine Check."""
         if self.cfg.is_admin(user_id):
             return True, "Admin Bypass"
 
         current_usage = db_user.get("storage_used_bytes", 0)
-        max_storage = getattr(self.cfg, "MAX_STORAGE_BYTES", 5 * 1024 * 1024 * 1024) # Default 5GB
+        max_storage = getattr(self.cfg, "MAX_STORAGE_BYTES", 5 * 1024 * 1024 * 1024) 
         
         if (current_usage + incoming_size) > max_storage:
             error_msg = (
@@ -168,10 +152,7 @@ class FileHandler:
     # ═════════════════════════════════════════════════════════════════════════════
 
     async def handle_upload(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """
-        Main entry point for ANY incoming media/file.
-        Automatically detects if it's a single file or a batch (media_group).
-        """
+        """Main entry point for ANY incoming media/file."""
         db_user = await self._system_guard(update, ctx)
         if not db_user:
             return
@@ -182,7 +163,7 @@ class FileHandler:
         # ─── 1. EXTRACT FILE DATA ───
         file_info = self._extract_file_data(msg)
         if not file_info:
-            return # Ignore normal text messages
+            return 
             
         tg_file_id, file_name, file_size, file_type = file_info
 
@@ -196,11 +177,11 @@ class FileHandler:
             return
 
         # ─── 3. FILE SIZE LIMIT CHECK ───
-        max_bytes = self.cfg.MAX_FILE_SIZE_MB * 1024 * 1024
+        max_bytes = getattr(self.cfg, 'MAX_FILE_SIZE_MB', 2000) * 1024 * 1024
         if file_size and file_size > max_bytes:
             await msg.reply_text(
                 f"❌ <b>File Too Large!</b>\n\n"
-                f"System Limit: {self.cfg.MAX_FILE_SIZE_MB} MB\n"
+                f"System Limit: {getattr(self.cfg, 'MAX_FILE_SIZE_MB', 2000)} MB\n"
                 f"Your File: {format_size(file_size)}\n\n"
                 "<i>Telegram bot limits se badi file direct upload nahi ho sakti.</i>",
                 parse_mode=ParseMode.HTML
@@ -225,8 +206,11 @@ class FileHandler:
         """Processes a standalone file upload."""
         user = update.effective_user
         
-        # Show processing action
-        await ctx.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+        try:
+            await ctx.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+        except Exception:
+            pass
+        
         processing_msg = await msg.reply_text("⚡ <b>Encrypting and Uploading to Secure Vault...</b>", parse_mode=ParseMode.HTML)
 
         try:
@@ -268,10 +252,7 @@ class FileHandler:
         await self._render_upload_success(processing_msg, file_key, file_name, file_size, file_type)
 
     async def _process_batch_upload(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, msg: Message, tg_file_id: str, file_name: str, file_size: int, file_type: str) -> None:
-        """
-        Handles Media Groups (Multiple files sent at once).
-        Collects them in memory for a brief window, forwards them safely, and generates a combined UI.
-        """
+        """Handles Media Groups (Multiple files sent at once)."""
         group_id = msg.media_group_id
         user = update.effective_user
 
@@ -283,16 +264,13 @@ class FileHandler:
                 "processing_msg": None,
                 "total_size": 0
             }
-            # Create a placeholder message for the batch
             _media_group_cache[group_id]["processing_msg"] = await msg.reply_text(
                 "⏳ <b>Batch Upload Detected!</b>\nCollecting multiple files...", 
                 parse_mode=ParseMode.HTML
             )
             
-            # Start a background task to finalize the batch after a delay
             ctx.application.create_task(self._finalize_batch_upload(ctx, group_id))
 
-        # Add current file to the batch cache
         _media_group_cache[group_id]["files"].append({
             "msg_id": msg.message_id,
             "file_id": tg_file_id,
@@ -305,7 +283,7 @@ class FileHandler:
 
     async def _finalize_batch_upload(self, ctx: ContextTypes.DEFAULT_TYPE, group_id: str) -> None:
         """Waits for Telegram to finish sending media group parts, then processes all at once."""
-        await asyncio.sleep(3.0) # Wait 3 seconds to catch all parts of the media group
+        await asyncio.sleep(3.0) 
 
         batch_data = _media_group_cache.pop(group_id, None)
         if not batch_data:
@@ -317,24 +295,24 @@ class FileHandler:
         proc_msg: Message = batch_data["processing_msg"]
         total_size = batch_data["total_size"]
 
-        await proc_msg.edit_text(
-            f"⚡ <b>Processing Batch:</b> {len(files)} files received.\nForwarding to Secure Vault...",
-            parse_mode=ParseMode.HTML
-        )
+        try:
+            await proc_msg.edit_text(
+                f"⚡ <b>Processing Batch:</b> {len(files)} files received.\nForwarding to Secure Vault...",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
         success_keys = []
         
-        # Process each file iteratively
         for f in files:
             try:
-                # Forward to storage
                 stored_msg = await ctx.bot.forward_message(
                     chat_id=self.cfg.STORAGE_CHANNEL_ID,
                     from_chat_id=chat_id,
                     message_id=f["msg_id"]
                 )
                 
-                # Database insertion
                 file_key = self.enc.generate_file_key()
                 tags = [word.lstrip("#").lower() for word in f["caption"].split() if word.startswith("#")]
                 
@@ -354,11 +332,9 @@ class FileHandler:
             except Exception as e:
                 logger.error(f"Batch item {f['file_name']} failed: {e}")
 
-        # Update global storage
         if success_keys:
             await Database.update_user_storage(user_id, total_size, increment=True)
 
-        # Render Batch Success UI
         batch_summary = (
             f"✅ <b>Batch Upload Successful!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -368,9 +344,11 @@ class FileHandler:
             f"<i>You can view all files in your /myfiles vault.</i>"
         )
         
-        # Give a link to their files
         btn = [[InlineKeyboardButton("📁 Open My Vault", callback_data="start_myfiles")]]
-        await proc_msg.edit_text(batch_summary, reply_markup=InlineKeyboardMarkup(btn), parse_mode=ParseMode.HTML)
+        try:
+            await proc_msg.edit_text(batch_summary, reply_markup=InlineKeyboardMarkup(btn), parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
 
     def _extract_file_data(self, msg: Message) -> Optional[Tuple[str, str, int, str]]:
         """Deep extraction of Telegram File MetaData."""
@@ -386,7 +364,7 @@ class FileHandler:
             name = f.file_name or f"{f.performer or 'Unknown'} - {f.title or 'Audio'}.mp3"
             return f.file_id, name, f.file_size, "audio"
         elif msg.photo:
-            f = msg.photo[-1] # Highest Quality
+            f = msg.photo[-1] 
             return f.file_id, f"photo_HD_{f.file_id[:8]}.jpg", f.file_size, "photo"
         elif msg.sticker:
             f = msg.sticker
@@ -431,8 +409,10 @@ class FileHandler:
         if share_link:
             result_text += f"\n🔗 <b>Share URL:</b>\n<code>{share_link}</code>"
 
-        await processing_msg.edit_text(result_text, reply_markup=markup, parse_mode=ParseMode.HTML)
-
+        try:
+            await processing_msg.edit_text(result_text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"Failed to edit message: {e}")
 
     # ═════════════════════════════════════════════════════════════════════════════
     # 📥 FETCH & DELIVERY ENGINE (DEEP LINKS & COMMANDS)
@@ -445,8 +425,9 @@ class FileHandler:
             return
 
         args = ctx.args
+        msg = update.effective_message
         if not args:
-            await update.message.reply_text(
+            await msg.reply_text(
                 "⚠️ <b>Invalid Syntax</b>\nUsage: <code>/get FILE_KEY</code>\n\n"
                 "<i>File key aapko upload karne ke baad milti hai.</i>",
                 parse_mode=ParseMode.HTML
@@ -457,27 +438,21 @@ class FileHandler:
         await self._deliver_file(update, ctx, file_key)
 
     async def _deliver_file(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, file_key: str) -> None:
-        """
-        The core engine that pulls files from DB, checks locks, and sends to user.
-        """
+        """The core engine that pulls files from DB, checks locks, and sends to user."""
         user = update.effective_user
         msg = update.effective_message
 
-        # Fetch from DB
         file_doc = await Database.get_file(file_key)
         if not file_doc:
             await msg.reply_text("❌ <b>File Not Found!</b>\nYe file ya toh delete ho chuki hai ya key galat hai.", parse_mode=ParseMode.HTML)
             return
 
-        # Anti-Spam Rate Limit
         if not self.rl.check(user.id, "download"):
             wait = self.rl.get_wait_time(user.id, "download")
             await msg.reply_text(f"⏳ <b>Rate Limit Active:</b> Please wait {wait} seconds.", parse_mode=ParseMode.HTML)
             return
 
-        # ─── 🔐 SECURITY: PASSWORD LOCK CHECK ───
         if await FileSecurityGuard.is_locked(file_doc):
-            # Agar file lock hai, toh user se password mangna padega
             ctx.user_data["unlocking_file_key"] = file_key
             ctx.user_data["awaiting_action"] = "unlock_password"
             
@@ -490,28 +465,27 @@ class FileHandler:
             )
             return
 
-        # File un-locked hai, direct bhejo
         await self._send_file_from_storage(msg, ctx, file_doc)
 
     async def _send_file_from_storage(self, msg: Message, ctx: ContextTypes.DEFAULT_TYPE, file_doc: dict) -> None:
         """Physical transfer of file from Storage Channel to the User via Bot."""
-        # Show realistic action
-        await ctx.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+        try:
+            await ctx.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+        except Exception:
+            pass
         
         try:
-            # Copy file (This prevents the original uploader from being exposed)
+            bot_username = getattr(self.cfg, 'BOT_USERNAME', 'bot')
             sent_msg = await ctx.bot.copy_message(
                 chat_id=msg.chat_id,
                 from_chat_id=self.cfg.STORAGE_CHANNEL_ID,
                 message_id=file_doc["message_id"],
-                caption=file_doc.get("caption") or f"📄 <b>{escape_html(file_doc['file_name'])}</b>\n🤖 @{self.cfg.BOT_USERNAME}",
+                caption=file_doc.get("caption") or f"📄 <b>{escape_html(file_doc['file_name'])}</b>\n🤖 @{bot_username}",
                 parse_mode=ParseMode.HTML
             )
             
-            # Update analytics
             await Database.increment_download(file_doc["file_key"])
 
-            # Send metadata below file
             info_btn = [[InlineKeyboardButton("📋 Specs", callback_data=f"file_info_{file_doc['file_key']}")]]
             await sent_msg.reply_text(
                 f"✅ <b>File Delivery Complete!</b>\n"
@@ -535,14 +509,14 @@ class FileHandler:
             return
 
         user = update.effective_user
+        msg = update.effective_message
         args = ctx.args
         page = 1
         if args and args[0].isdigit():
             page = max(1, int(args[0]))
 
-        per_page = 7 # Elite layout spacing
+        per_page = 7 
         
-        # Parallel database fetch for speed
         files, total = await asyncio.gather(
             Database.get_user_files(user.id, page=page, per_page=per_page),
             Database.count_user_files(user.id)
@@ -551,7 +525,7 @@ class FileHandler:
         total_pages = max(1, math.ceil(total / per_page))
 
         if not files:
-            await update.effective_message.reply_text(
+            await msg.reply_text(
                 "📭 <b>Your Vault is Empty!</b>\n\n"
                 "Abhi tak koi file upload nahi ki hai. Chat mein koi file bhej kar shuruwat karein.",
                 parse_mode=ParseMode.HTML
@@ -577,7 +551,6 @@ class FileHandler:
 
         text = "\n".join(lines)
 
-        # Smart Pagination UI
         nav_buttons = []
         if page > 1:
             nav_buttons.append(InlineKeyboardButton("◀️ Previous", callback_data=f"file_myfiles_{page-1}"))
@@ -586,9 +559,11 @@ class FileHandler:
 
         markup = InlineKeyboardMarkup([nav_buttons] if nav_buttons else [])
         
-        # Typing feel
-        await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.effective_message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        try:
+            await ctx.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+        except Exception:
+            pass
+        await msg.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
     # ═════════════════════════════════════════════════════════════════════════════
@@ -602,39 +577,37 @@ class FileHandler:
             return
 
         user_id = update.effective_user.id
+        msg = update.effective_message
         args = ctx.args
         if not args:
-            await update.effective_message.reply_text("⚠️ Syntax: <code>/delete FILE_KEY</code>", parse_mode=ParseMode.HTML)
+            await msg.reply_text("⚠️ Syntax: <code>/delete FILE_KEY</code>", parse_mode=ParseMode.HTML)
             return
 
         file_key = args[0].strip()
         
-        # Validate Ownership & Calculate Size before deleting
         file_doc = await Database.get_file(file_key)
         if not file_doc:
-            await update.effective_message.reply_text("❌ File not found.", parse_mode=ParseMode.HTML)
+            await msg.reply_text("❌ File not found.", parse_mode=ParseMode.HTML)
             return
 
         if not await FileSecurityGuard.verify_owner(file_doc, user_id) and not self.cfg.is_admin(user_id):
-            await update.effective_message.reply_text("🛑 <b>Security Alert:</b> You don't own this file!", parse_mode=ParseMode.HTML)
+            await msg.reply_text("🛑 <b>Security Alert:</b> You don't own this file!", parse_mode=ParseMode.HTML)
             return
 
         file_size = file_doc.get("file_size", 0)
 
-        # Perform Deletion
         success = await Database.delete_file(file_key, user_id)
         if success:
-            # 📉 REAL STORAGE MINUS ENGINE
             await Database.update_user_storage(user_id, file_size, increment=False)
             
-            await update.effective_message.reply_text(
+            await msg.reply_text(
                 f"🗑️ <b>Asset Destroyed!</b>\n\n"
                 f"File <code>{file_key}</code> has been permanently removed.\n"
                 f"📉 Storage freed: <b>{format_size(file_size)}</b>", 
                 parse_mode=ParseMode.HTML
             )
         else:
-            await update.effective_message.reply_text("❌ Deletion process failed at database level.")
+            await msg.reply_text("❌ Deletion process failed at database level.")
 
 
     # ═════════════════════════════════════════════════════════════════════════════
@@ -642,31 +615,30 @@ class FileHandler:
     # ═════════════════════════════════════════════════════════════════════════════
 
     async def handle_lock_file(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Triggers the lock UI. Requires password input via text next."""
+        """Triggers the lock UI."""
         db_user = await self._system_guard(update, ctx)
         if not db_user:
             return
 
         user_id = update.effective_user.id
+        msg = update.effective_message
         args = ctx.args
         
         if not args:
-            await update.effective_message.reply_text("⚠️ Syntax: <code>/lock FILE_KEY</code>", parse_mode=ParseMode.HTML)
+            await msg.reply_text("⚠️ Syntax: <code>/lock FILE_KEY</code>", parse_mode=ParseMode.HTML)
             return
 
         file_key = args[0].strip()
         
-        # Ownership guard
         file_doc = await Database.get_file(file_key)
         if not file_doc or not await FileSecurityGuard.verify_owner(file_doc, user_id):
-            await update.effective_message.reply_text("🛑 <b>Denied:</b> You can only lock your own files.", parse_mode=ParseMode.HTML)
+            await msg.reply_text("🛑 <b>Denied:</b> You can only lock your own files.", parse_mode=ParseMode.HTML)
             return
 
-        # Setup Conversation State
         ctx.user_data["action_file_key"] = file_key
         ctx.user_data["awaiting_action"] = "set_lock_password"
         
-        await update.effective_message.reply_text(
+        await msg.reply_text(
             f"🔐 <b>Locking Protocol Initiated</b>\n\n"
             f"File: <code>{file_key}</code>\n"
             f"Please type a strong password in the chat below to secure this file.\n"
@@ -681,46 +653,40 @@ class FileHandler:
             return
 
         user_id = update.effective_user.id
+        msg = update.effective_message
         args = ctx.args
         if not args:
-            await update.effective_message.reply_text("⚠️ Syntax: <code>/unlock FILE_KEY</code>", parse_mode=ParseMode.HTML)
+            await msg.reply_text("⚠️ Syntax: <code>/unlock FILE_KEY</code>", parse_mode=ParseMode.HTML)
             return
 
         file_key = args[0].strip()
         
-        # Strict Ownership Check
         file_doc = await Database.get_file(file_key)
         if not file_doc or not await FileSecurityGuard.verify_owner(file_doc, user_id):
-            await update.effective_message.reply_text("🛑 <b>Denied:</b> You can't unlock someone else's file.", parse_mode=ParseMode.HTML)
+            await msg.reply_text("🛑 <b>Denied:</b> You can't unlock someone else's file.", parse_mode=ParseMode.HTML)
             return
 
-        # Perform unlock
         success = await Database.set_file_password(file_key, user_id, None)
         if success:
-            await update.effective_message.reply_text(
+            await msg.reply_text(
                 f"🔓 <b>Vault Opened</b>\nFile <code>{file_key}</code> is now publicly accessible.", 
                 parse_mode=ParseMode.HTML
             )
         else:
-            await update.effective_message.reply_text("❌ System Error during unlock process.")
+            await msg.reply_text("❌ System Error during unlock process.")
 
     # ═════════════════════════════════════════════════════════════════════════════
     # ⌨️ DYNAMIC TEXT INPUT ROUTER (For Passwords & Renaming)
     # ═════════════════════════════════════════════════════════════════════════════
-    # NOTE: Your main `bot.py` needs a `MessageHandler(filters.TEXT & ~filters.COMMAND, file_h.handle_text_input)`
 
     async def handle_text_input(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """
-        The brain that catches passwords and renames when the bot asks a question.
-        Replaces ugly command-based renaming/locking.
-        """
+        """The brain that catches passwords and renames when the bot asks a question."""
         msg = update.effective_message
-        if not msg.text:
+        if not msg or not msg.text:
             return
 
         action = ctx.user_data.get("awaiting_action")
         
-        # 1. Action: Setting a Lock Password
         if action == "set_lock_password":
             file_key = ctx.user_data.get("action_file_key")
             password = msg.text.strip()
@@ -738,11 +704,9 @@ class FileHandler:
                     f"⚠️ <i>Please memorize your password, it cannot be recovered.</i>",
                     parse_mode=ParseMode.HTML
                 )
-            # Clear state
             ctx.user_data.pop("awaiting_action", None)
             ctx.user_data.pop("action_file_key", None)
             
-        # 2. Action: Trying to Unlock/Fetch a File
         elif action == "unlock_password":
             file_key = ctx.user_data.get("unlocking_file_key")
             input_pw = msg.text.strip()
@@ -756,7 +720,6 @@ class FileHandler:
             saved_hash = file_doc.get("password_hash")
             
             if enc.verify_password(input_pw, saved_hash):
-                # Password Correct! Deliver file.
                 await msg.reply_text("✅ <b>Password Accepted.</b> Decrypting vault...", parse_mode=ParseMode.HTML)
                 ctx.user_data.pop("awaiting_action", None)
                 ctx.user_data.pop("unlocking_file_key", None)
@@ -764,7 +727,6 @@ class FileHandler:
             else:
                 await msg.reply_text("❌ <b>INCORRECT PASSWORD</b>\nIntrusion attempt logged. Try again:")
                 
-        # 3. Action: Renaming a File
         elif action == "rename_file":
             file_key = ctx.user_data.get("action_file_key")
             new_name = msg.text.strip()
@@ -788,15 +750,16 @@ class FileHandler:
         if not db_user:
             return
 
+        msg = update.effective_message
         args = ctx.args
         if not args:
-            await update.effective_message.reply_text("⚠️ Syntax: <code>/info FILE_KEY</code>", parse_mode=ParseMode.HTML)
+            await msg.reply_text("⚠️ Syntax: <code>/info FILE_KEY</code>", parse_mode=ParseMode.HTML)
             return
 
         file_key = args[0].strip()
         file_doc = await Database.get_file(file_key)
         if not file_doc:
-            await update.effective_message.reply_text("❌ File not found in database.", parse_mode=ParseMode.HTML)
+            await msg.reply_text("❌ File not found in database.", parse_mode=ParseMode.HTML)
             return
 
         emoji = get_file_type_emoji(file_doc.get("file_type", ""))
@@ -829,7 +792,7 @@ class FileHandler:
                 [InlineKeyboardButton("❌ Destroy Asset", callback_data=f"file_delete_{file_key}")]
             ]
 
-        await update.effective_message.reply_text(
+        await msg.reply_text(
             text, 
             reply_markup=InlineKeyboardMarkup(buttons) if buttons else None, 
             parse_mode=ParseMode.HTML
@@ -841,27 +804,22 @@ class FileHandler:
     # ═════════════════════════════════════════════════════════════════════════════
 
     async def handle_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """
-        Ultimate Callback Router.
-        Catches all button presses related to files and routes them seamlessly.
-        """
+        """Ultimate Callback Router."""
         q = update.callback_query
         
-        # ZERO LAG IMPLEMENTATION
         try:
             await q.answer()
         except Exception as e:
-            logger.warning(f"Failed to answer callback, might be expired: {e}")
+            logger.warning(f"Failed to answer callback: {e}")
             return
 
         data = q.data
         user = q.from_user
 
         try:
-            # ─── SHARE LINK LOGIC ───
             if data.startswith("file_share_"):
                 file_key = data[len("file_share_"):]
-                bot_user = self.cfg.BOT_USERNAME
+                bot_user = getattr(self.cfg, 'BOT_USERNAME', 'bot')
                 link = f"https://t.me/{bot_user}?start=get_{file_key}"
                 
                 await q.message.reply_text(
@@ -870,7 +828,6 @@ class FileHandler:
                     parse_mode=ParseMode.HTML
                 )
 
-            # ─── DELETE WARNING LOGIC ───
             elif data.startswith("file_delete_"):
                 file_key = data[len("file_delete_"):]
                 confirm_btn = [
@@ -883,11 +840,9 @@ class FileHandler:
                     parse_mode=ParseMode.HTML
                 )
 
-            # ─── CONFIRM DELETE LOGIC ───
             elif data.startswith("file_confirmdel_"):
                 file_key = data[len("file_confirmdel_"):]
                 
-                # Fetch size for storage deduction
                 file_doc = await Database.get_file(file_key)
                 if not file_doc:
                     await q.message.edit_text("❌ File already gone.")
@@ -904,7 +859,6 @@ class FileHandler:
                 else:
                     await q.message.edit_text("❌ Deletion Failed. Permission denied.")
 
-            # ─── RENAME INITIATION LOGIC ───
             elif data.startswith("file_renamemenu_"):
                 file_key = data[len("file_renamemenu_"):]
                 ctx.user_data["action_file_key"] = file_key
@@ -916,7 +870,6 @@ class FileHandler:
                     parse_mode=ParseMode.HTML
                 )
 
-            # ─── LOCK INITIATION LOGIC ───
             elif data.startswith("file_lock_"):
                 file_key = data[len("file_lock_"):]
                 ctx.user_data["action_file_key"] = file_key
@@ -928,21 +881,18 @@ class FileHandler:
                     parse_mode=ParseMode.HTML
                 )
 
-            # ─── PAGINATION (MY FILES) ───
             elif data.startswith("file_myfiles_"):
                 page = int(data.split("_")[-1])
                 ctx.args = [str(page)]
                 update._effective_message = q.message
                 await self.handle_my_files(update, ctx)
 
-            # ─── INFO PANEL ───
             elif data.startswith("file_info_"):
                 file_key = data[len("file_info_"):]
                 ctx.args = [file_key]
                 update._effective_message = q.message
                 await self.handle_file_info(update, ctx)
 
-            # ─── CANCEL ACTION ───
             elif data == "file_cancel_action":
                 ctx.user_data.pop("awaiting_action", None)
                 await q.message.edit_text("✅ <b>Action Aborted.</b>", parse_mode=ParseMode.HTML)
@@ -950,4 +900,3 @@ class FileHandler:
         except Exception as e:
             logger.error(f"Error executing callback {data}: {e}", exc_info=True)
             await q.message.reply_text("⚠️ UI Framework Timeout. Try sending command directly.", parse_mode=ParseMode.HTML)
-
