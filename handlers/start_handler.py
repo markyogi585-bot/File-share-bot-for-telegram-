@@ -11,7 +11,8 @@ import logging
 import asyncio
 from typing import Optional
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatAction
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from config import Config
@@ -91,7 +92,6 @@ class StartHandler:
             return
 
         # 🎮 6. VIP DASHBOARD UI (The Bold Unicode Magic)
-        # Yahan hum Unicode Bold fonts ka use kar rahe hain: 𝗨𝗽𝗹𝗼𝗮𝗱 𝗙𝗶𝗹𝗲𝘀, 𝗠𝘆 𝗙𝗶𝗹𝗲𝘀
         buttons = [
             [
                 InlineKeyboardButton("𝗨𝗽𝗹𝗼𝗮𝗱 𝗙𝗶𝗹𝗲", callback_data="start_upload_help"),
@@ -137,7 +137,6 @@ class StartHandler:
 
     async def _handle_deep_link_file(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, file_key: str) -> None:
         """Processes /start get_FILEKEY and delivers the file instantly."""
-        # Avoiding circular imports
         from handlers.file_handler import FileHandler
         fh = FileHandler(self.cfg)
 
@@ -300,23 +299,17 @@ class StartHandler:
     # ═════════════════════════════════════════════════════════════
 
     async def handle_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """
-        Ye engine "System Alert" wale error ko completely khatam karta hai.
-        Isme `try-except` lagaya hai aur query ko manually assign kiya hai.
-        """
         q = update.callback_query
         
         try:
-            # 1. Answer immediately to stop the loading circle (Zero Lag)
             await q.answer()
         except Exception as e:
             logger.warning(f"Failed to answer callback query: {e}")
-            return # Agar query purani ho gayi toh aage mat badho
+            return
 
         data = q.data
 
         try:
-            # 2. Re-routing Logic
             if data == "start_profile":
                 update._effective_message = q.message
                 await self.handle_profile(update, ctx)
